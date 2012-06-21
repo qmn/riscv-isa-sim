@@ -50,6 +50,7 @@ public:
         throw trap_load_address_misaligned; \
       } \
       void* paddr = translate(addr, false, false); \
+      simulate_memory_map(addr, false, 0); \
       return *(type##_t*)paddr; \
     }
 
@@ -74,6 +75,7 @@ public:
         throw trap_store_address_misaligned; \
       } \
       void* paddr = translate(addr, true, false); \
+      simulate_memory_map(addr, true, (unsigned int)val); \
       *(type##_t*)paddr = val; \
     }
 
@@ -185,6 +187,13 @@ private:
       return (void*)(((long)addr & (PGSIZE-1)) + tlb_data[idx]);
 
     return refill(addr, store, fetch);
+  }
+
+  void simulate_memory_map(reg_t addr, bool store, unsigned int val) {
+    if ((unsigned int)addr == 0xB8000) {
+      fprintf(stdout, "%c", (char)val);
+      fflush(stdout);
+    }
   }
   
   friend class processor_t;
