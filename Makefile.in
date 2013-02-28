@@ -98,7 +98,7 @@ COMPILE_C     := $(CC)  -MMD -MP $(CPPFLAGS) $(CXXFLAGS) $(INCDIRS) \
 
 LD            := $(CXX)
 LDFLAGS       := @LDFLAGS@
-LIBS          := @LIBS@
+LIBS          := @LIBS@ -lreadline
 LINK          := $(LD) $(LDFLAGS) 
 
 # Library creation

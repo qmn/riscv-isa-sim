@@ -1,17 +1,24 @@
 #include "sim.h"
 #include "htif.h"
+#include "pcr.h"
 #include <sys/mman.h>
 #include <map>
 #include <iostream>
 #include <climits>
 #include <assert.h>
 #include <stdlib.h>
+#include <readline/readline.h>
+#include <readline/history.h>
 
 void sim_t::interactive()
 {
-	putchar(':');
-	char s[128];
-	std::cin.getline(s,sizeof(s)-1);
+	char *s;
+
+	s = readline(": ");
+	if (s && *s)
+	{
+		add_history(s);
+	}
 
 	char* p = strtok(s," ");
 	if(!p)
@@ -134,7 +141,16 @@ reg_t sim_t::get_pcreg(const std::vector<std::string>& args)
 	if(p >= (int)num_cores() || r >= NXPR)
 		throw trap_illegal_instruction;
 
-	return procs[p]->get_pcr(r);
+	reg_t val = procs[p]->get_pcr(r);
+
+	if (r == 0) // decode status register
+	{
+		printf("Status: IM=%2x VM=%d S64=%d U64=%d S=%d PS=%d ET=%d\n",
+		       (unsigned int)((val & SR_IM) >> SR_IM_SHIFT), !!(val & SR_VM), !!(val & SR_S64),
+		       !!(val & SR_U64), !!(val & SR_S), !!(val & SR_PS), !!(val & SR_ET));
+	}
+
+	return val;
 }
 
 reg_t sim_t::get_freg(const std::vector<std::string>& args)
@@ -157,7 +173,7 @@ void sim_t::interactive_reg(const std::string& cmd, const std::vector<std::strin
 
 void sim_t::interactive_pcreg(const std::string& cmd, const std::vector<std::string>& args)
 {
-	printf("[PCR] 0x%016llx\n",(unsigned long long)get_pcreg(args));
+	printf("0x%016llx\n",(unsigned long long)get_pcreg(args));
 }
 
 union fpr
