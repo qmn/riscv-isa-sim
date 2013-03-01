@@ -48,6 +48,8 @@ void sim_t::interactive()
 	funcs["str"] = &sim_t::interactive_str;
 	funcs["until"] = &sim_t::interactive_until;
 	funcs["while"] = &sim_t::interactive_until;
+	funcs["lp"] = &sim_t::interactive_linux_process;
+	funcs["tran"] = &sim_t::interactive_translate;
 	funcs["q"] = &sim_t::interactive_quit;
 
 	try
@@ -199,6 +201,9 @@ void sim_t::interactive_fregd(const std::string& cmd, const std::vector<std::str
 
 reg_t sim_t::get_mem(const std::vector<std::string>& args)
 {
+	bool old_vm_enable = 0;
+	reg_t old_ptbr = 0; 
+
 	if(args.size() != 1 && args.size() != 2)
 		throw trap_illegal_instruction;
 
@@ -208,8 +213,12 @@ reg_t sim_t::get_mem(const std::vector<std::string>& args)
 		int p = atoi(args[0].c_str());
 		if(p >= (int)num_cores())
 			throw trap_illegal_instruction;
+
+		old_vm_enable = mmu->get_vm_enabled();
+		old_ptbr = mmu->get_ptbr();
 		mmu->set_vm_enabled(!!(procs[p]->sr & SR_VM));
 		mmu->set_ptbr(procs[p]->mmu.get_ptbr());
+
 		addr_str = args[1];
 	}
 
@@ -233,6 +242,12 @@ reg_t sim_t::get_mem(const std::vector<std::string>& args)
 			val = mmu->load_uint8(addr);
 			break;
 	}
+
+	if (args.size() == 2) {
+		mmu->set_vm_enabled(old_vm_enable);
+		mmu->set_ptbr(old_ptbr);
+	}
+
 	return val;
 }
 
@@ -257,22 +272,41 @@ void sim_t::interactive_str(const std::string& cmd, const std::vector<std::strin
 
 void sim_t::interactive_until(const std::string& cmd, const std::vector<std::string>& args)
 {
+	int count;
+
 	if(args.size() < 3)
 		return;
 
-	std::string scmd = args[0];
+	std::string scmd;
+
+	if (args.size() == 4 && args[1] == "pc") {
+		scmd = args[1];
+		count = atoi(args[0].c_str());
+	} else {
+		scmd = args[0];
+		count = 1;
+	}
+
 	reg_t val = strtol(args[args.size()-1].c_str(),NULL,16);
 	if(val == LONG_MAX)
 		val = strtoul(args[args.size()-1].c_str(),NULL,16);
-	
+
+
 	std::vector<std::string> args2;
-	args2 = std::vector<std::string>(args.begin()+1,args.end()-1);
+
+	if (args.size() == 4 && scmd == "pc") {
+		args2 = std::vector<std::string>(args.begin()+2,args.end()-1);
+	} else {
+		args2 = std::vector<std::string>(args.begin()+1,args.end()-1);
+	}
 
 	while(1)
 	{
 		reg_t current;
 		if(scmd == "reg")
 			current = get_reg(args2);
+		else if(scmd =="pcreg")
+			current = get_pcreg(args2);
 		else if(scmd == "pc")
 			current = get_pc(args2);
 		else if(scmd == "mem")
@@ -280,11 +314,156 @@ void sim_t::interactive_until(const std::string& cmd, const std::vector<std::str
 		else
 			return;
 
-		if(cmd == "until" && current == val)
-			break;
-		if(cmd == "while" && current != val)
-			break;
+		if(cmd == "until" && current == val) {
+			if (count == 1) break;
+			count--;
+		}
+		if(cmd == "while" && current != val) {
+			if (count == 1) break;
+			count--;
+		}
 
 		step_all(1,1,false);
 	}
+}
+	
+#define COMM_OFF  0x2c0
+#define PID_OFF	  0x118
+#define TASKS_OFF 0xd8
+#define KSP_OFF   728
+#define STATE_OFF 0
+
+void sim_t::lp_info(reg_t current_ptr)
+{
+	reg_t task_struct_ptr;
+	reg_t kernel_stack_ptr;
+	reg_t comm_ptr;
+	char ch;
+
+	task_struct_ptr = mmu->load_uint64(current_ptr);
+	// printf("current->task = %lx\n", task_struct_ptr);
+
+	kernel_stack_ptr = mmu->load_uint64(task_struct_ptr + KSP_OFF);
+	// printf("kernel sp = %lx\n", kernel_stack_ptr);
+
+	comm_ptr = task_struct_ptr + COMM_OFF;
+	// printf("current->task->comm = ");
+
+	printf ("Thread name: ");
+	while((ch = mmu->load_uint8(comm_ptr++))) putchar(ch);
+	
+	printf(" (PID %d)\n", mmu->load_uint32(task_struct_ptr + PID_OFF));
+	printf("current       = %lx\n", current_ptr);
+	printf("current->task = %lx\n", task_struct_ptr);
+	printf("kernel sp     = %lx\n", kernel_stack_ptr);
+
+	reg_t task_ptr, task_comm;
+	task_ptr = mmu->load_uint64(task_struct_ptr + TASKS_OFF) - TASKS_OFF;
+	task_comm = task_ptr + COMM_OFF;
+
+	printf("Threads in current->task->tasks:\n");
+	printf("  PID\ttask_struct address\tstate\tName\n");
+	while (task_ptr != task_struct_ptr) {
+		printf("  %d\t(%lx)\t%lx\t", mmu->load_uint32(task_ptr + PID_OFF), 
+		       task_ptr, mmu->load_uint64(task_ptr + STATE_OFF));
+		while((ch = mmu->load_uint8(task_comm++))) putchar(ch);
+		printf("\n");
+		task_ptr = mmu->load_uint64(task_ptr + TASKS_OFF) - TASKS_OFF;
+		task_comm = task_ptr + COMM_OFF;
+	}
+}
+
+void sim_t::interactive_linux_process(const std::string& cmd, const std::vector<std::string>& args)
+{
+	reg_t current_ptr;
+
+	bool old_vm_enable;
+	reg_t old_ptbr; 
+
+	old_vm_enable = mmu->get_vm_enabled();
+	old_ptbr = mmu->get_ptbr();
+
+	mmu->set_vm_enabled(!!(procs[0]->sr & SR_VM));
+	mmu->set_ptbr(procs[0]->mmu.get_ptbr());
+
+	if (args.size() >= 1)
+	{
+		current_ptr = strtoul(args[0].c_str(), NULL, 16);
+	}
+	else
+	{
+		current_ptr = procs[0]->get_pcr(PCR_K0);
+	}
+
+	lp_info(current_ptr);
+
+	mmu->set_vm_enabled(old_vm_enable);
+	mmu->set_ptbr(old_ptbr);
+}
+
+#define FMT_PTE "%016lx"
+#define FMT_PPN "%013lx"
+
+void sim_t::pte_decode(pte_t pte)
+{
+	static const char *perm[8] = {
+		"---", "--x", "-w-", "-wx",
+		"r--", "r-x", "rw-", "rwx"
+	};
+	static const char *resv[8] = {
+		"000", "001", "010", "011",
+		"100", "101", "110", "111",
+	};
+
+	printf(FMT_PPN " resv=%s S=%s U=%s D=%u R=%u E=%u T=%u\n",
+		(pte),
+		resv[(pte >> 10) & 0x7],
+		perm[(pte >> 7) & 0x7],
+		perm[(pte >> 4) & 0x7],
+		(pte & PTE_D) != 0, (pte & PTE_R) != 0,
+		(pte & PTE_E) != 0, (pte & PTE_T) != 0);
+}
+
+void sim_t::interactive_translate(const std::string& cmd, const std::vector<std::string>& args)
+{
+	reg_t addr;
+
+	if (args.size() < 1)
+		throw trap_illegal_instruction;
+
+	addr = strtol(args[0].c_str(),NULL,16);
+	if(addr == LONG_MAX) {
+		addr = strtoul(args[0].c_str(),NULL,16);
+	}
+
+	bool old_vm_enable;
+	old_vm_enable = mmu->get_vm_enabled();
+	mmu->set_vm_enabled(0);
+
+	reg_t ptbr = procs[0]->get_pcr(PCR_PTBR);
+	printf("ptbr = %016lx\n", ptbr);
+
+	reg_t vpn2 = ((addr >> 33) & 0x3FF) << 3;
+	pte_t pte2 = mmu->load_uint64(ptbr + vpn2);
+	printf("entry %4ld: ", vpn2 >> 3);
+	pte_decode(pte2);
+
+	if (pte2 & PTE_T) {
+		reg_t base2 = (pte2 >> 13) << 13;
+		reg_t vpn1 = ((addr >> 23) & 0x3FF) << 3;
+		pte_t pte1 = mmu->load_uint64(base2 + vpn1);
+		printf("entry %4ld: ", vpn1 >> 3);
+		pte_decode(pte1);
+
+		if (pte1 & PTE_T) {
+			reg_t base1 = (pte1 >> 13) << 13;
+			reg_t vpn0 = ((addr >> 13) & 0x3FF) << 3;
+			pte_t pte0 = mmu->load_uint64(base1 + vpn0);
+			printf("entry %4ld: ", vpn0 >> 3);
+			pte_decode(pte0);
+		}
+	}
+
+	mmu->set_vm_enabled(old_vm_enable);
+
 }

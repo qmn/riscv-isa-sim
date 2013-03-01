@@ -71,6 +71,11 @@ private:
 	reg_t get_pc(const std::vector<std::string>& args);
 	reg_t get_tohost(const std::vector<std::string>& args);
 
+	void lp_info(reg_t current_ptr);
+	void interactive_linux_process(const std::string& cmd, const std::vector<std::string>& args);
+	void pte_decode(pte_t pte);
+	void interactive_translate(const std::string& cmd, const std::vector<std::string>& args);
+
 	friend class htif_t;
 };
 
