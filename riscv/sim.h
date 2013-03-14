@@ -75,6 +75,7 @@ private:
 	void interactive_linux_process(const std::string& cmd, const std::vector<std::string>& args);
 	void pte_decode(pte_t pte);
 	void interactive_translate(const std::string& cmd, const std::vector<std::string>& args);
+	void interactive_pagetable(const std::string& cmd, const std::vector<std::string>& args);
 
 	friend class htif_t;
 };

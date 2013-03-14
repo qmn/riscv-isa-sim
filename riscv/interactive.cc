@@ -50,6 +50,7 @@ void sim_t::interactive()
 	funcs["while"] = &sim_t::interactive_until;
 	funcs["lp"] = &sim_t::interactive_linux_process;
 	funcs["tran"] = &sim_t::interactive_translate;
+	funcs["lm"] = &sim_t::interactive_pagetable;
 	funcs["q"] = &sim_t::interactive_quit;
 
 	try
@@ -258,16 +259,35 @@ void sim_t::interactive_mem(const std::string& cmd, const std::vector<std::strin
 
 void sim_t::interactive_str(const std::string& cmd, const std::vector<std::string>& args)
 {
-	if(args.size() != 1)
+	bool old_vm_enable;
+	reg_t old_ptbr; 
+	reg_t addr;
+
+	if(args.size() < 1)
 		throw trap_illegal_instruction;
 
-	reg_t addr = strtol(args[0].c_str(),NULL,16);
+	old_vm_enable = mmu->get_vm_enabled();
+	old_ptbr = mmu->get_ptbr();
+
+	if (args.size() > 1)
+	{
+		mmu->set_vm_enabled(!!(procs[0]->sr & SR_VM));
+		mmu->set_ptbr(procs[0]->mmu.get_ptbr());
+		addr = strtol(args[1].c_str(),NULL,16);
+	}
+	else
+	{
+		addr = strtol(args[0].c_str(), NULL, 16);
+	}
 
 	char ch;
 	while((ch = mmu->load_uint8(addr++)))
 		putchar(ch);
 
 	putchar('\n');
+
+	mmu->set_vm_enabled(old_vm_enable);
+	mmu->set_ptbr(old_ptbr);
 }
 
 void sim_t::interactive_until(const std::string& cmd, const std::vector<std::string>& args)
@@ -333,15 +353,11 @@ void sim_t::interactive_until(const std::string& cmd, const std::vector<std::str
 #define KSP_OFF   728
 #define STATE_OFF 0
 
-void sim_t::lp_info(reg_t current_ptr)
+void sim_t::lp_info(reg_t task_struct_ptr)
 {
-	reg_t task_struct_ptr;
 	reg_t kernel_stack_ptr;
 	reg_t comm_ptr;
 	char ch;
-
-	task_struct_ptr = mmu->load_uint64(current_ptr);
-	// printf("current->task = %lx\n", task_struct_ptr);
 
 	kernel_stack_ptr = mmu->load_uint64(task_struct_ptr + KSP_OFF);
 	// printf("kernel sp = %lx\n", kernel_stack_ptr);
@@ -352,10 +368,9 @@ void sim_t::lp_info(reg_t current_ptr)
 	printf ("Thread name: ");
 	while((ch = mmu->load_uint8(comm_ptr++))) putchar(ch);
 	
-	printf(" (PID %d)\n", mmu->load_uint32(task_struct_ptr + PID_OFF));
-	printf("current       = %lx\n", current_ptr);
-	printf("current->task = %lx\n", task_struct_ptr);
-	printf("kernel sp     = %lx\n", kernel_stack_ptr);
+	printf("  (PID %d)\n", mmu->load_uint32(task_struct_ptr + PID_OFF));
+	printf("  task = %lx\n", task_struct_ptr);
+	printf("  ksp  = %lx\n", kernel_stack_ptr);
 
 	reg_t task_ptr, task_comm;
 	task_ptr = mmu->load_uint64(task_struct_ptr + TASKS_OFF) - TASKS_OFF;
@@ -375,7 +390,7 @@ void sim_t::lp_info(reg_t current_ptr)
 
 void sim_t::interactive_linux_process(const std::string& cmd, const std::vector<std::string>& args)
 {
-	reg_t current_ptr;
+	reg_t task_struct_ptr;
 
 	bool old_vm_enable;
 	reg_t old_ptbr; 
@@ -388,14 +403,14 @@ void sim_t::interactive_linux_process(const std::string& cmd, const std::vector<
 
 	if (args.size() >= 1)
 	{
-		current_ptr = strtoul(args[0].c_str(), NULL, 16);
+		task_struct_ptr = strtoul(args[0].c_str(), NULL, 16);
 	}
 	else
 	{
-		current_ptr = procs[0]->get_pcr(PCR_K0);
+		task_struct_ptr = procs[0]->get_pcr(PCR_K0);
 	}
 
-	lp_info(current_ptr);
+	lp_info(task_struct_ptr);
 
 	mmu->set_vm_enabled(old_vm_enable);
 	mmu->set_ptbr(old_ptbr);
@@ -466,4 +481,74 @@ void sim_t::interactive_translate(const std::string& cmd, const std::vector<std:
 
 	mmu->set_vm_enabled(old_vm_enable);
 
+}
+
+#define MM_OFF 0xe8
+#define PGD_OFF 0x48 /* the offset of mm->pgd */
+
+void sim_t::interactive_pagetable(const std::string& cmd, const std::vector<std::string>& args)
+{
+	reg_t task_ptr;
+	reg_t mm;
+
+	bool old_vm_enable;
+	reg_t old_ptbr; 
+
+	old_vm_enable = mmu->get_vm_enabled();
+	old_ptbr = mmu->get_ptbr();
+
+	mmu->set_vm_enabled(!!(procs[0]->sr & SR_VM));
+	mmu->set_ptbr(procs[0]->mmu.get_ptbr());
+
+	if (args.size() >= 1)
+	{
+		task_ptr = strtoul(args[0].c_str(), NULL, 16);
+	}
+	else
+	{
+		task_ptr = procs[0]->get_pcr(PCR_K0);
+	}
+
+	mm = mmu->load_uint64(task_ptr + MM_OFF);
+
+	reg_t pgd = mmu->load_uint64(mm + PGD_OFF); /* gives a virtual address */
+	printf("virtual table  = %016lx\n", pgd);
+	pgd = pgd & (unsigned long)(0x3fffffff);
+	printf("physical table = %016lx\n", pgd);
+
+	mmu->set_vm_enabled(0); // need to work with physical addresses now
+
+	int vpn2, vpn1, vpn0;
+	for (vpn2 = 0; vpn2 < 1024; vpn2++) {	
+		pte_t pte2 = mmu->load_uint64(pgd + (vpn2 << 3));
+		if (pte2 & (PTE_E | PTE_T)) {
+			printf("pgd %4d: ", vpn2);
+			pte_decode(pte2);
+		}
+
+		if (pte2 & PTE_T) {
+			for (vpn1 = 0; vpn1 < 1024; vpn1++) {
+				reg_t base2 = (pte2 >> 13) << 13;
+				pte_t pte1 = mmu->load_uint64(base2 + (vpn1 << 3));
+				if (pte1 & (PTE_E | PTE_T)) {
+					printf("  pmd %4d: ", vpn1);
+					pte_decode(pte1);
+				}
+
+				if (pte1 & PTE_T) {
+					for (vpn0 = 0; vpn0 < 1024; vpn0++) {
+						reg_t base1 = (pte1 >> 13) << 13;
+						pte_t pte0 = mmu->load_uint64(base1 + (vpn0 << 3));
+						if (pte0 & PTE_E) {
+							printf("    pte %4d: ", vpn0);
+							pte_decode(pte0);
+						}
+					}
+				}
+			}
+		}
+	}
+
+	mmu->set_vm_enabled(old_vm_enable);
+	mmu->set_ptbr(old_ptbr);
 }
