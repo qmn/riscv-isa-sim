@@ -9,6 +9,8 @@
 #include <iostream>
 #include <assert.h>
 
+extern int pty;
+
 processor_t::processor_t(sim_t* _sim, mmu_t* _mmu, uint32_t _id)
 	: sim(*_sim), mmu(*_mmu), id(_id), utidx(0)
 {
@@ -20,7 +22,7 @@ processor_t::processor_t(sim_t* _sim, mmu_t* _mmu, uint32_t _id)
 }
 
 processor_t::processor_t(sim_t* _sim, mmu_t* _mmu, uint32_t _id,
-												 uint32_t _utidx)
+	uint32_t _utidx)
 	: sim(*_sim), mmu(*_mmu), id(_id)
 {
 	reset(true);
@@ -62,6 +64,8 @@ void processor_t::reset(bool value)
 	count = 0;
 	compare = 0;
 	cycle = 0;
+	tosim = 0;
+	fromsim = 0;
 	set_fsr(0);
 
 	// vector stuff
@@ -126,6 +130,7 @@ void processor_t::step(size_t n, bool noisy)
 			do { \
 				insn = _mmu.load_insn(npc, sr & SR_EC, &func); \
 				if(noisy) disasm(insn,pc); \
+				handle_sim_call(); \
 				npc = func(this, insn, npc); \
 				pc = npc; \
 			} while(0)
@@ -176,16 +181,63 @@ void processor_t::step(size_t n, bool noisy)
 		interrupts_pending |= 1 << IRQ_TIMER;
 }
 
+#define SIM_CALL_WRITE 4
+#define BUF_SIZE 64
+
+void processor_t::handle_sim_call()
+{
+	reg_t tosim = get_pcr(PCR_TOSIM);
+
+	unsigned long packet[4];
+	unsigned long pkt_pa;
+
+	bool old_enable = mmu.get_vm_enabled();
+
+	if (tosim != 0) {
+		pkt_pa = tosim;
+
+		mmu.set_vm_enabled(false);
+		packet[0] = mmu.load_uint64(pkt_pa);      // call number
+		packet[1] = mmu.load_uint64(pkt_pa + 8);  // fd
+		packet[2] = mmu.load_uint64(pkt_pa + 16); // buffer location
+		packet[3] = mmu.load_uint64(pkt_pa + 24); // count
+
+		switch (packet[0]) {
+
+		case SIM_CALL_WRITE:
+			char buf[BUF_SIZE];
+			int i = 0;
+			int k = 0;
+			long count = (long)packet[3];
+			for (k = 0; k < count; k += BUF_SIZE) {
+				for (i = 0; i < BUF_SIZE && (k + i < count); i++)
+					buf[i] = mmu.load_uint8(packet[2] + k + i);
+
+				if (pty) {
+					write(pty, buf, i);	
+				} else {
+					fwrite(buf, i, 1, stdout);
+					fflush(stdout);
+				}
+			}
+			break;
+		}
+
+		mmu.set_vm_enabled(old_enable);
+	}
+	set_pcr(PCR_TOSIM, 0);
+}
+
 void processor_t::take_trap(reg_t t, bool noisy)
 {
 	if(noisy)
 	{
 		if ((sreg_t)t < 0)
-			printf("core %3d: interrupt %lld, pc 0x%016llx\n",
-						 id, (long long)(t << 1 >> 1), (unsigned long long)pc);
+			printf("core %3d: interrupt %lld, pc 0x%016llx, cycle 0x%016llx\n",
+						 id, (long long)(t << 1 >> 1), (unsigned long long)pc, (unsigned long long)cycle);
 		else
-			printf("core %3d: trap %s, pc 0x%016llx\n",
-						 id, trap_name(trap_t(t)), (unsigned long long)pc);
+			printf("core %3d: trap %s, pc 0x%016llx, cycle 0x%016llx\n",
+						 id, trap_name(trap_t(t)), (unsigned long long)pc, (unsigned long long)cycle);
 	}
 
 	// switch to supervisor, set previous supervisor bit, disable traps
@@ -266,6 +318,12 @@ void processor_t::set_pcr(int which, reg_t val)
 		case PCR_K1:
 			pcr_k1 = val;
 			break;
+		case PCR_TOSIM:
+			tosim = val;
+			break;
+		case PCR_FROMSIM:
+			fromsim = val;
+			break;
 		case PCR_VECBANK:
 			vecbanks = val & 0xff;
 			vecbanks_count = __builtin_popcountll(vecbanks);
@@ -310,6 +368,10 @@ reg_t processor_t::get_pcr(int which)
 			return pcr_k1;
 		case PCR_VECBANK:
 			return vecbanks;
+		case PCR_TOSIM:
+			return tosim;
+		case PCR_FROMSIM:
+			return fromsim;
 		case PCR_TOHOST:
 			return tohost;
 		case PCR_FROMHOST:

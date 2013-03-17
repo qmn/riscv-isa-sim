@@ -46,6 +46,7 @@ void sim_t::interactive()
 	funcs["fregd"] = &sim_t::interactive_fregd;
 	funcs["mem"] = &sim_t::interactive_mem;
 	funcs["str"] = &sim_t::interactive_str;
+	funcs["cycle"] = &sim_t::interactive_cycle;
 	funcs["until"] = &sim_t::interactive_until;
 	funcs["while"] = &sim_t::interactive_until;
 	funcs["lp"] = &sim_t::interactive_linux_process;
@@ -146,13 +147,6 @@ reg_t sim_t::get_pcreg(const std::vector<std::string>& args)
 
 	reg_t val = procs[p]->get_pcr(r);
 
-	if (r == 0) // decode status register
-	{
-		printf("Status: IM=%2x VM=%d S64=%d U64=%d S=%d PS=%d ET=%d\n",
-		       (unsigned int)((val & SR_IM) >> SR_IM_SHIFT), !!(val & SR_VM), !!(val & SR_S64),
-		       !!(val & SR_U64), !!(val & SR_S), !!(val & SR_PS), !!(val & SR_ET));
-	}
-
 	return val;
 }
 
@@ -169,14 +163,42 @@ reg_t sim_t::get_freg(const std::vector<std::string>& args)
 	return procs[p]->FPR[r];
 }
 
+reg_t sim_t::get_cycle(const std::vector<std::string>& args)
+{
+	if (args.size() != 1)
+		throw trap_illegal_instruction;
+
+	int p = atoi(args[0].c_str());
+	if (p >= (int)num_cores())
+		throw trap_illegal_instruction;
+
+	return procs[p]->get_cycle();
+}
+
 void sim_t::interactive_reg(const std::string& cmd, const std::vector<std::string>& args)
 {
 	printf("0x%016llx\n",(unsigned long long)get_reg(args));
 }
 
+void sim_t::interactive_cycle(const std::string& cmd, const std::vector<std::string>& args)
+{
+	printf("0x%016llx\n",(unsigned long long)get_cycle(args));
+}
+
 void sim_t::interactive_pcreg(const std::string& cmd, const std::vector<std::string>& args)
 {
-	printf("0x%016llx\n",(unsigned long long)get_pcreg(args));
+	unsigned long long val;
+
+	val = (unsigned long long)get_pcreg(args);
+
+	printf("0x%016llx\n", val);
+
+	if (atoi(args[1].c_str()) == 0) // decode status register
+	{
+		printf("Status: IM=%2x VM=%d S64=%d U64=%d S=%d PS=%d ET=%d\n",
+		       (unsigned int)((val & SR_IM) >> SR_IM_SHIFT), !!(val & SR_VM), !!(val & SR_S64),
+		       !!(val & SR_U64), !!(val & SR_S), !!(val & SR_PS), !!(val & SR_ET));
+	}
 }
 
 union fpr
@@ -331,6 +353,8 @@ void sim_t::interactive_until(const std::string& cmd, const std::vector<std::str
 			current = get_pc(args2);
 		else if(scmd == "mem")
 			current = get_mem(args2);
+		else if(scmd == "cycle")
+			current = get_cycle(args2);
 		else
 			return;
 

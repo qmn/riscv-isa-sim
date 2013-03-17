@@ -58,6 +58,7 @@ private:
 	void interactive_run_proc_noisy(const std::string& cmd, const std::vector<std::string>& args);
 	void interactive_run_proc_silent(const std::string& cmd, const std::vector<std::string>& args);
 	void interactive_reg(const std::string& cmd, const std::vector<std::string>& args);
+	void interactive_cycle(const std::string& cmd, const std::vector<std::string>& args);
 	void interactive_pcreg(const std::string& cmd, const std::vector<std::string>& args);
 	void interactive_fregs(const std::string& cmd, const std::vector<std::string>& args);
 	void interactive_fregd(const std::string& cmd, const std::vector<std::string>& args);
@@ -70,6 +71,7 @@ private:
 	reg_t get_mem(const std::vector<std::string>& args);
 	reg_t get_pc(const std::vector<std::string>& args);
 	reg_t get_tohost(const std::vector<std::string>& args);
+	reg_t get_cycle(const std::vector<std::string>& args);
 
 	void lp_info(reg_t current_ptr);
 	void interactive_linux_process(const std::string& cmd, const std::vector<std::string>& args);

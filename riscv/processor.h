@@ -26,6 +26,7 @@ public:
 	bool running() { return run; }
 	void set_pcr(int which, reg_t val);
 	reg_t get_pcr(int which);
+	reg_t get_cycle() { return cycle; }
 
 private:
 	sim_t& sim;
@@ -46,6 +47,8 @@ private:
 	reg_t pcr_k0;
 	reg_t pcr_k1;
 	reg_t cause;
+	reg_t tosim;
+	reg_t fromsim;
 	reg_t tohost;
 	reg_t fromhost;
 	uint32_t interrupts_pending;
@@ -62,6 +65,7 @@ private:
 
 	// functions
 	void take_interrupt(); // take a trap if any interrupts are pending
+	void handle_sim_call();
 	void set_fsr(uint32_t val); // set the floating-point status register
 	void take_trap(reg_t t, bool noisy); // take an exception
 	void disasm(insn_t insn, reg_t pc); // disassemble and print an instruction

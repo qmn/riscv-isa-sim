@@ -5,10 +5,14 @@
 #include <iostream>
 #include <climits>
 #include <assert.h>
+#include <signal.h>
 
 #ifdef __linux__
 # define mmap mmap64
 #endif
+
+extern bool using_pty;
+extern int pty;
 
 sim_t::sim_t(int _nprocs, htif_t* _htif)
 	: htif(_htif),
@@ -37,10 +41,16 @@ sim_t::sim_t(int _nprocs, htif_t* _htif)
 
 	mmu = new mmu_t(mem, memsz);
 
-	for(size_t i = 0; i < num_cores(); i++)
+	// initialize processors
+
+	for(size_t i = 0; i < num_cores(); i++) {
 		procs[i] = new processor_t(this, new mmu_t(mem, memsz), i);
+	}
+
+	// initialize htif
 
 	htif->init(this);
+
 }
 
 sim_t::~sim_t()
