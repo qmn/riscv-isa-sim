@@ -9,12 +9,16 @@
 #include <iostream>
 #include <assert.h>
 
+#define BUF_SIZE 64
 extern int pty;
+char read_buf[BUF_SIZE];
+int bytes_read;
 
 processor_t::processor_t(sim_t* _sim, mmu_t* _mmu, uint32_t _id)
 	: sim(*_sim), mmu(*_mmu), id(_id), utidx(0)
 {
 	reset(true);
+	bytes_read = 0;
 
 	// create microthreads
 	for (int i=0; i<MAX_UTS; i++)
@@ -179,10 +183,20 @@ void processor_t::step(size_t n, bool noisy)
 	count += i;
 	if(old_count < compare && uint64_t(old_count) + i >= compare)
 		interrupts_pending |= 1 << IRQ_TIMER;
+
+	if (pty && bytes_read == 0) {
+		// try to read some bytes from the keyboard
+		bytes_read = read(pty, read_buf, BUF_SIZE);
+		if (bytes_read > 0) {
+			interrupts_pending |= 1 << IRQ_KB;
+		} else {
+			bytes_read = 0;
+		}
+	}
 }
 
 #define SIM_CALL_WRITE 4
-#define BUF_SIZE 64
+#define SIM_CALL_READ  3
 
 void processor_t::handle_sim_call()
 {
@@ -198,17 +212,19 @@ void processor_t::handle_sim_call()
 
 		mmu.set_vm_enabled(false);
 		packet[0] = mmu.load_uint64(pkt_pa);      // call number
-		packet[1] = mmu.load_uint64(pkt_pa + 8);  // fd
-		packet[2] = mmu.load_uint64(pkt_pa + 16); // buffer location
-		packet[3] = mmu.load_uint64(pkt_pa + 24); // count
+
+		long count;
+		int i, k;
 
 		switch (packet[0]) {
 
 		case SIM_CALL_WRITE:
+			packet[1] = mmu.load_uint64(pkt_pa + 8);  // fd
+			packet[2] = mmu.load_uint64(pkt_pa + 16); // buffer location
+			packet[3] = mmu.load_uint64(pkt_pa + 24); // count
+
 			char buf[BUF_SIZE];
-			int i = 0;
-			int k = 0;
-			long count = (long)packet[3];
+			count = (long)packet[3];
 			for (k = 0; k < count; k += BUF_SIZE) {
 				for (i = 0; i < BUF_SIZE && (k + i < count); i++)
 					buf[i] = mmu.load_uint8(packet[2] + k + i);
@@ -220,6 +236,24 @@ void processor_t::handle_sim_call()
 					fflush(stdout);
 				}
 			}
+			break;
+
+		case SIM_CALL_READ:
+			packet[1] = 0;
+			packet[2] = mmu.load_uint64(pkt_pa + 16); // buffer location
+			packet[3] = 0;
+
+			mmu.store_uint64(pkt_pa + 24, bytes_read); // write count
+
+			for (k = 0; k < bytes_read; k++) {
+				mmu.store_uint8(packet[2] + k, read_buf[k]);
+			}
+
+			if (k != BUF_SIZE)
+				mmu.store_uint8(packet[2] + k, '\0');
+
+			interrupts_pending &= ~(1 << IRQ_KB);
+			bytes_read = 0;
 			break;
 		}
 
