@@ -30,11 +30,14 @@
 #define PCR_K1       13
 #define PCR_VECBANK  18
 #define PCR_VECCFG   19
+#define PCR_TOSIM    27
+#define PCR_FROMSIM  28
 #define PCR_RESET    29
 #define PCR_TOHOST   30
 #define PCR_FROMHOST 31
 
 #define IRQ_IPI   5
+#define IRQ_KB    6
 #define IRQ_TIMER 7
 
 #define CAUSE_MISALIGNED_FETCH 0

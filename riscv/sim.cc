@@ -5,6 +5,8 @@
 #include <iostream>
 #include <climits>
 #include <assert.h>
+#include <signal.h>
+#include <unistd.h>
 
 #ifdef __linux__
 # define mmap mmap64
@@ -23,40 +25,32 @@ sim_t::sim_t(int _nprocs, int mem_mb, const std::vector<std::string>& args)
   size_t quantum = std::max(PGSIZE, (reg_t)sysconf(_SC_PAGESIZE));
   memsz0 = memsz0/quantum*quantum;
 
-  memsz = memsz0;
-  mem = (char*)mmap(NULL, memsz, PROT_WRITE, MAP_PRIVATE|MAP_ANON, -1, 0);
+	mmu = new mmu_t(mem, memsz);
 
-  if(mem == MAP_FAILED)
-  {
-    while(mem == MAP_FAILED && (memsz = memsz*10/11/quantum*quantum))
-      mem = (char*)mmap(NULL, memsz, PROT_WRITE, MAP_PRIVATE|MAP_ANON, -1, 0);
-    assert(mem != MAP_FAILED);
-    fprintf(stderr, "warning: only got %lu bytes of target mem (wanted %lu)\n",
-            (unsigned long)memsz, (unsigned long)memsz0);
-  }
+	// initialize processors
 
-  mmu = new mmu_t(mem, memsz);
+	for(size_t i = 0; i < num_cores(); i++) {
+		procs[i] = new processor_t(this, new mmu_t(mem, memsz), i);
+	}
 
-  for(size_t i = 0; i < num_cores(); i++)
-    procs[i] = new processor_t(this, new mmu_t(mem, memsz), i);
 }
 
 sim_t::~sim_t()
 {
-  for(size_t i = 0; i < num_cores(); i++)
-  {
-    mmu_t* pmmu = &procs[i]->mmu;
-    delete procs[i];
-    delete pmmu;
-  }
-  delete mmu;
-  munmap(mem, memsz);
+	for(size_t i = 0; i < num_cores(); i++)
+	{
+		mmu_t* pmmu = &procs[i]->mmu;
+		delete procs[i];
+		delete pmmu;
+	}
+	delete mmu;
+	munmap(mem, memsz);
 }
 
 void sim_t::send_ipi(reg_t who)
 {
-  if(who < num_cores())
-    procs[who]->deliver_ipi();
+	if(who < num_cores())
+		procs[who]->deliver_ipi();
 }
 
 reg_t sim_t::get_scr(int which)
@@ -71,6 +65,12 @@ reg_t sim_t::get_scr(int which)
 
 void sim_t::run(bool debug)
 {
+#if 1
+	mmu->store_uint32(0, memsz >> 20);
+	// word 1 of memory contains the core count
+	mmu->store_uint32(4, num_cores());
+#endif
+
   while (!htif->done())
   {
     if(!debug)

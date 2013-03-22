@@ -154,6 +154,7 @@ public:
   // keep the MMU in sync with processor mode
   void set_supervisor(bool sup) { supervisor = sup; }
   void set_vm_enabled(bool en) { vm_enabled = en; }
+  bool get_vm_enabled() { return vm_enabled; }
 
   // flush the TLB and instruction cache
   void flush_tlb();

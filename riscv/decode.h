@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include "pcr.h"
 #include "config.h"
+#include <string.h>
 
 typedef int int128_t __attribute__((mode(TI)));
 typedef unsigned int uint128_t __attribute__((mode(TI)));
