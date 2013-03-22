@@ -16,14 +16,25 @@ sim_t::sim_t(int _nprocs, int mem_mb, const std::vector<std::string>& args)
   : htif(new htif_isasim_t(this, args)),
     procs(_nprocs)
 {
-  // allocate target machine's memory, shrinking it as necessary
-  // until the allocation succeeds
-  size_t memsz0 = (size_t)mem_mb << 20;
-  if (memsz0 == 0)
-    memsz0 = 1L << (sizeof(size_t) == 8 ? 32 : 30);
+	// allocate target machine's memory, shrinking it as necessary
+	// until the allocation succeeds
+	size_t memsz0 = (size_t)mem_mb << 20;
+	if (memsz0 == 0)
+	memsz0 = 1L << (sizeof(size_t) == 8 ? 32 : 30);
 
-  size_t quantum = std::max(PGSIZE, (reg_t)sysconf(_SC_PAGESIZE));
-  memsz0 = memsz0/quantum*quantum;
+	size_t quantum = std::max(PGSIZE, (reg_t)sysconf(_SC_PAGESIZE));
+	memsz0 = memsz0/quantum*quantum;
+
+	memsz = memsz0;
+	mem = (char*)mmap(NULL, memsz, PROT_WRITE, MAP_PRIVATE|MAP_ANON, -1, 0);
+
+	if(mem == MAP_FAILED) {
+		while(mem == MAP_FAILED && (memsz = memsz*10/11/quantum*quantum))
+		mem = (char*)mmap(NULL, memsz, PROT_WRITE, MAP_PRIVATE|MAP_ANON, -1, 0);
+		assert(mem != MAP_FAILED);
+		fprintf(stderr, "warning: only got %lu bytes of target mem (wanted %lu)\n",
+			(unsigned long)memsz, (unsigned long)memsz0);
+	}
 
 	mmu = new mmu_t(mem, memsz);
 
@@ -67,7 +78,6 @@ void sim_t::run(bool debug)
 {
 #if 1
 	mmu->store_uint32(0, memsz >> 20);
-	// word 1 of memory contains the core count
 	mmu->store_uint32(4, num_cores());
 #endif
 

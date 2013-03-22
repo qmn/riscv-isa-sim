@@ -122,7 +122,7 @@ void processor_t::step(size_t n, bool noisy)
 		return;
 
 	size_t i = 0;
-	while(1) try
+	try
 	{
 		take_interrupt();
 
@@ -132,6 +132,7 @@ void processor_t::step(size_t n, bool noisy)
 		// execute_insn fetches and executes one instruction
 		#define execute_insn(noisy) \
 		do { \
+			handle_sim_call(); \
 			mmu_t::insn_fetch_t fetch = _mmu.load_insn(npc, sr & SR_EC); \
 			if(noisy) disasm(fetch.insn, npc); \
 			npc = fetch.func(this, fetch.insn, npc); \
@@ -167,7 +168,6 @@ void processor_t::step(size_t n, bool noisy)
 	{
 		// this microthread has finished
 		assert(cmd == vt_command_stop);
-		break;
 	}
 
 	cycle += i;
